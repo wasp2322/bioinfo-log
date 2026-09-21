@@ -58,3 +58,42 @@ Fine-grained token の `Only select repositories` に対象リポジトリが出
 ## 次の予定
 - GIAB HG002 (chr21) を用いた FASTQ → BAM → VCF の手動実行
 - `hap.py` によるベンチマーク（recall / precision の測定）
+
+## Day 2 — GIAB HG002 を用いた手動パイプラインとベンチマーク
+対象: GRCh38 chr21:14,000,000-24,000,000（約10 Mb）、約30x に間引き
+FASTQ → bwa mem → samtools sort → GATK MarkDuplicates
+→ GATK HaplotypeCaller → VariantFiltration → rtg vcfeval
+
+### 結果（GIAB v4.2.1 信頼領域内、PASS コール）
+
+| | Precision | Sensitivity | F-measure | FP | FN |
+|---|---|---|---|---|---|
+| SNP | 0.9995 | 0.9905 | 0.9950 | 7 | 132 |
+| INDEL | 0.9933 | 0.9776 | 0.9854 | 16 | 54 |
+
+### 考察
+- フィルタ前の INDEL 数（3,644）は SNP の約24%と、ゲノム全体の目安（約15%）より多かった。
+  偽陽性過多を疑ったが、信頼領域内の INDEL precision は 99.3% で偽陽性は少なかった。
+  評価対象になった INDEL は約2,370件で、残り約1,200件は GIAB の信頼領域外
+  （反復配列・セントロメア近傍など）にあり、本ベンチマークでは正誤を判定できない。
+- 上記の数値は「信頼領域内・10 Mb 窓」での成績であり、全ゲノムの精度を示すものではない。
+- 重複率は 0.23% と低く出たが、1/10 ダウンサンプリング後の値であり、
+  重複ペアの両方が残る確率が約1%に下がるため過小評価されている。
+  ライブラリ品質の指標としては使えない（QC は間引き前に取るべき）。
+
+### 今回の簡略化・限界
+- リファレンスを chr21 のみに限定（他領域由来リードの誤マップを許容する学習上の割り切り）
+- 元データは novoalign + decoy 入り GRCh38（`GRCh38_full_plus_hs38d1_analysis_set_minus_alts`）、
+  再解析は bwa + GIAB no_alt analysis set の chr21 のみ。再アライメントで 0.3% がアンマップに
+- BQSR 未実施
+- ハードフィルタは SNP / INDEL を分離せず単一閾値
+- 複数ライブラリ由来のリードを単一の LB に統合（MarkDuplicates の判定に影響しうる）
+- Apple Silicon のため bwa-mem2 ではなく bwa を使用（Rosetta は AVX 非対応）
+
+### ハマった点
+- ターミナルが bash だったため、`~/.zshrc` に書いた PATH が読まれず `nextflow: command not found`。
+  `chsh -s /bin/zsh` で zsh に統一し、`conda init zsh` で conda を再初期化
+- 別タブは作業ディレクトリと conda 環境を引き継がない。
+  タブを開いたら `conda activate wgs && cd ~/bioinfo/day2` を最初に実行する
+- リモート BAM の領域抽出サイズを事前に見積もれなかった（300x × 10 Mb で約 1.8 GB）
+- リモート BAM から抽出したファイルは `samtools quickcheck` で完全性を確認する
